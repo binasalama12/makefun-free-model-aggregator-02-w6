@@ -108,12 +108,14 @@ const chillUntil = new Map<string, number>();
 let tick = 0; // completion requests started so far
 
 const CHILL_AFTER = 2;   // consecutive failures that trigger a cooldown
-const CHILL_SPAN = 3;    // requests a cooled model sits out
+// The sit-out grows with the streak: a model that keeps refusing after coming
+// back earns a longer bench each time (3, 6, 9, ... capped at 12 requests).
+const chillSpan = (n: number): number => Math.min(3 + (n - CHILL_AFTER) * 3, 12);
 
 function markFail(id: string): void {
   const n = (strikes.get(id) ?? 0) + 1;
   strikes.set(id, n);
-  if (n >= CHILL_AFTER) chillUntil.set(id, tick + CHILL_SPAN);
+  if (n >= CHILL_AFTER) chillUntil.set(id, tick + chillSpan(n));
 }
 function markWin(id: string): void { strikes.delete(id); chillUntil.delete(id); }
 const isChilled = (id: string): boolean => (chillUntil.get(id) ?? 0) > tick;
@@ -130,10 +132,19 @@ function fits(m: Mdl, need: Need): boolean {
   return true;
 }
 
+// Effective rank: raw rating minus a strike toll, so among near-equals a clean
+// model beats one that just refused, while a far stronger model still leads.
+const effRank = (m: Mdl): number => m.rating - 75 * (strikes.get(m.id) ?? 0);
+
 function rankFor(need: Need, wanted: string): Mdl[] {
   const able = POOL.filter((m) => fits(m, need));
   const warm = able.filter((m) => !isChilled(m.id));
-  const ranked = [...(warm.length > 0 ? warm : able)].sort((a, b) => b.rating - a.rating || (a.id < b.id ? -1 : 1));
+  // Warm models go by effective rank. If every able model is chilled, the one
+  // whose bench ends soonest leads instead of the raw favourite: it is the
+  // likeliest to answer, and hammering the longest-benched wastes the prompt.
+  const ranked = warm.length > 0
+    ? [...warm].sort((a, b) => effRank(b) - effRank(a) || b.rating - a.rating || (a.id < b.id ? -1 : 1))
+    : [...able].sort((a, b) => (chillUntil.get(a.id) ?? 0) - (chillUntil.get(b.id) ?? 0) || b.rating - a.rating || (a.id < b.id ? -1 : 1));
   // A client that names a concrete free model gets it first; "auto" gets pure rank.
   if (wanted && wanted !== 'auto') {
     const at = ranked.findIndex((m) => m.id === wanted);

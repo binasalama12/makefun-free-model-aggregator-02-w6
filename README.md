@@ -31,11 +31,14 @@ never a locally invented answer.
 A gateway refusal — HTTP 429, any 5xx, or a network error — is not an answer:
 the request moves to the next ranked model that fits, and the refusals are
 reported on the final response in the `x-makefun-upstream-failures` header.
-Each model keeps a strike counter of consecutive failures; two strikes in a
-row cool the model down for the next few requests so a rate-limited model
-stops eating prompts, and a single success wipes its slate clean. Cooldowns
-are counted in requests, not seconds, and routing never reads the clock, so a
-replayed trial makes the exact same choices.
+Each model keeps a strike counter of consecutive failures. One strike already
+costs it effective rank, so among near-equals a clean model is preferred;
+two strikes in a row cool the model down, and the bench grows with the streak
+(3, 6, 9, up to 12 requests) so a model that keeps refusing stops eating
+prompts. If every model that fits is benched, the one whose bench ends
+soonest is tried first. A single success wipes a model's slate clean.
+Cooldowns are counted in requests, not seconds, and routing never reads the
+clock, so a replayed trial makes the exact same choices.
 
 ## Running it
 
